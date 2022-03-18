@@ -334,30 +334,33 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                     CONFIG_DEFAULT_KERBEROS_CANONICALIZE_HOST_NAMES));
 
             for (String serverAddress : serverAddresses) {
+                // localhost:2881:3881 按 : 分隔 ['localhost', '2881', '3881']
                 String serverParts[] = ConfigUtils.getHostAndPort(serverAddress);
                 if ((serverClientParts.length > 2) || (serverParts.length < 3)
                         || (serverParts.length > 4)) {
                     throw new ConfigException(addressStr + wrongFormat);
                 }
-
+                // localhost
                 String serverHostName = serverParts[0];
 
                 // server_config should be either host:port:port or host:port:port:type
                 InetSocketAddress tempAddress;
                 InetSocketAddress tempElectionAddress;
                 try {
+                    // 服务端口号为 2881
                     tempAddress = new InetSocketAddress(serverHostName, Integer.parseInt(serverParts[1]));
                     addr.addAddress(tempAddress);
                 } catch (NumberFormatException e) {
                     throw new ConfigException("Address unresolved: " + serverHostName + ":" + serverParts[1]);
                 }
                 try {
+                    // 选举端口号为 3881
                     tempElectionAddress = new InetSocketAddress(serverHostName, Integer.parseInt(serverParts[2]));
                     electionAddr.addAddress(tempElectionAddress);
                 } catch (NumberFormatException e) {
                     throw new ConfigException("Address unresolved: " + serverHostName + ":" + serverParts[2]);
                 }
-
+                // 服务端口号与选举端口号不能相同
                 if (tempAddress.getPort() == tempElectionAddress.getPort()) {
                     throw new ConfigException("Client and election port must be different! Please update the "
                             + "configuration file on server." + this.id);
@@ -1125,18 +1128,23 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
     @Override
     public synchronized void start() {
+        // getView() 返回集群所有参与者信息
         if (!getView().containsKey(myid)) {
             throw new RuntimeException("My id " + myid + " not in the peer list");
         }
+        // 加载文件到内存
         loadDataBase();
+        // 启动服务，默认NIO
         startServerCnxnFactory();
         try {
             adminServer.start();
         } catch (AdminServerException e) {
             LOG.warn("Problem starting AdminServer", e);
         }
+        // 开始选举，准备工作
         startLeaderElection();
         startJvmPauseMonitor();
+        // 开始选举。开启线程，即调用run()方法
         super.start();
     }
 
@@ -1209,7 +1217,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
     }
     public synchronized void startLeaderElection() {
         try {
+            // getPeerState() 返回服务器状态，默认为LOOKING
             if (getPeerState() == ServerState.LOOKING) {
+                // 创建选票，第一票投给自己
                 currentVote = new Vote(myid, getLastLoggedZxid(), getCurrentEpoch());
             }
         } catch (IOException e) {
@@ -1217,7 +1227,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             re.setStackTrace(e.getStackTrace());
             throw re;
         }
-
+        // 创建选票算法,使用快速选举 electionType默认为3 quorumPeer.setElectionType(config.getElectionAlg())
         this.electionAlg = createElectionAlgorithm(electionType);
     }
 
@@ -1338,16 +1348,30 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         case 2:
             throw new UnsupportedOperationException("Election Algorithm 2 is not supported.");
         case 3:
+            // zookeeper节点间通信管理类
             QuorumCnxManager qcm = createCnxnManager();
+            // 设置新的，返回旧的
             QuorumCnxManager oldQcm = qcmRef.getAndSet(qcm);
             if (oldQcm != null) {
                 LOG.warn("Clobbering already-set QuorumCnxManager (restarting leader election?)");
+                // 结束老的连接
                 oldQcm.halt();
             }
+            // 监听端口
             QuorumCnxManager.Listener listener = qcm.listener;
             if (listener != null) {
+                // 启动监听线程
                 listener.start();
+                // 快速选举
+                // 并通过starter(self, manager); 创建两条队列
+                // sendqueue = new LinkedBlockingQueue<ToSend>();
+                // recvqueue = new LinkedBlockingQueue<Notification>();
                 FastLeaderElection fle = new FastLeaderElection(this, qcm);
+                // 启动 WorkerSender 和 WorkerReceiver 两条线程。
+                // WorkerSender从sendqueue中取出数据生成选票并发送出去即加入到 queueSendMap 中。
+                // WorkerReceiver从recvQueue中取数据。recvQueue和recvqueue是有区别的
+                // recvQueue是接收其它服务器发送过来的消息。（自己投给自己的选票也是发到这里）
+                // recvqueue消息是从是WorkerReceiver发送过来的
                 fle.start();
                 le = fle;
             } else {
@@ -1484,11 +1508,16 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         }
                     } else {
                         try {
+                            // 设置QuorumPeer.reconfigFlag = false
                             reconfigFlagClear();
+                            // 默认false
                             if (shuttingDownLE) {
                                 shuttingDownLE = false;
                                 startLeaderElection();
                             }
+                            // 设置当前选票
+                            // makeLEStrategy().lookForLeader() 选举！！！
+                            // 策略模式，这里用的是快速选举（FastLeaderElection）
                             setCurrentVote(makeLEStrategy().lookForLeader());
                         } catch (Exception e) {
                             LOG.warn("Unexpected exception", e);

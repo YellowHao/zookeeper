@@ -304,7 +304,7 @@ public class X509TestContext {
                 FileUtils.writeStringToFile(keyStorePemFile, X509TestHelpers.pemEncodeCertAndPrivateKey(keyStoreCertificate, keyStoreKeyPair.getPrivate(), keyStorePassword), StandardCharsets.US_ASCII, false);
                 this.keyStorePemFile = keyStorePemFile;
             } catch (OperatorCreationException e) {
-                throw new IOException(e);
+//                throw new IOException(e);
             }
         }
         return keyStorePemFile;

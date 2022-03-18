@@ -516,7 +516,7 @@ public class Leader extends LearnerMaster {
                     // in LearnerHandler switch to the syncLimit
                     socket.setSoTimeout(self.tickTime * self.initLimit);
                     socket.setTcpNoDelay(nodelay);
-
+                    // 获取socket输入流
                     BufferedInputStream is = new BufferedInputStream(socket.getInputStream());
                     LearnerHandler fh = new LearnerHandler(socket, is, Leader.this);
                     fh.start();
@@ -592,21 +592,24 @@ public class Leader extends LearnerMaster {
             self.tick.set(0);
             zk.loadData();
 
+            // 当前是第几次leader选举结果 和 最大的事物ID
             leaderStateSummary = new StateSummary(self.getCurrentEpoch(), zk.getLastProcessedZxid());
 
             // Start thread that waits for connection requests from
             // new followers.
+            // 启动接收follower连接线程
             cnxAcceptor = new LearnerCnxAcceptor();
             cnxAcceptor.start();
-
+            // 等待生成最新的 epoch，如果未过半则wait(), 因为不断有follower进来，
+            // 等到过半，则唤醒线程
             long epoch = getEpochToPropose(self.getId(), self.getAcceptedEpoch());
-
+            // 用最新的 epoch 值生成最新的 zxid值
             zk.setZxid(ZxidUtils.makeZxid(epoch, 0));
 
             synchronized (this) {
                 lastProposed = zk.getZxid();
             }
-
+            // QuorumPacket 一般是 leader 和 follower 通讯的数据封装类
             newLeaderProposal.packet = new QuorumPacket(NEWLEADER, zk.getZxid(), null, null);
 
             if ((newLeaderProposal.packet.getZxid() & 0xffffffffL) != 0) {
@@ -653,7 +656,8 @@ public class Leader extends LearnerMaster {
             // We have to get at least a majority of servers in sync with
             // us. We do this by waiting for the NEWLEADER packet to get
             // acknowledged
-
+            // 阻塞等待接收过半的 follower 节点发送的 ACKEPOCH 信息；
+            // 此时说明已经确定了本轮选举后 epoch 值
             waitForEpochAck(self.getId(), leaderStateSummary);
             self.setCurrentEpoch(epoch);
             self.setLeaderAddressAndId(self.getQuorumAddress(), self.getId());
@@ -685,6 +689,7 @@ public class Leader extends LearnerMaster {
                 return;
             }
 
+            // 初始化
             startZkServer();
 
             /**
@@ -1387,6 +1392,15 @@ public class Leader extends LearnerMaster {
         }
     }
 
+    /**
+     *
+     * 拿到最新的epoch。 epoch默认为-1，然后比较最近接受到的epoch值
+     * 在此基础上+1，就是最新的epoch。
+     * leader生成最新的epoch时，需要follower同意，过半机制。
+     * 如果不过半，线程阻塞。
+     * 阻塞之后，还会有其他follower进来调用该方法。当过半节点同意epoch时，
+     * 唤醒线程，然后返回最新的epoch值
+     */
     @Override
     public long getEpochToPropose(long sid, long lastAcceptedEpoch) throws InterruptedException, IOException {
         synchronized (connectingFollowers) {
@@ -1452,6 +1466,7 @@ public class Leader extends LearnerMaster {
                 }
             }
             QuorumVerifier verifier = self.getQuorumVerifier();
+            // 过半机制  过半则唤醒，不过半则阻塞
             if (electingFollowers.contains(self.getId()) && verifier.containsQuorum(electingFollowers)) {
                 electionFinished = true;
                 electingFollowers.notifyAll();

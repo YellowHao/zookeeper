@@ -468,6 +468,7 @@ public class LearnerHandler extends ZooKeeperThread {
             oa = BinaryOutputArchive.getArchive(bufferedOutput);
 
             QuorumPacket qp = new QuorumPacket();
+            // 通过socket接收follower发送的数据； writePacket(qp, true);
             ia.readRecord(qp, "packet");
 
             messageTracker.trackReceived(qp.getType());
@@ -483,6 +484,7 @@ public class LearnerHandler extends ZooKeeperThread {
             byte[] learnerInfoData = qp.getData();
             if (learnerInfoData != null) {
                 ByteBuffer bbsid = ByteBuffer.wrap(learnerInfoData);
+                // 接收Learner发送过来的LearnInfo，获取sid（serverId）
                 if (learnerInfoData.length >= 8) {
                     this.sid = bbsid.getLong();
                 }
@@ -514,12 +516,13 @@ public class LearnerHandler extends ZooKeeperThread {
             }
 
             learnerMaster.registerLearnerHandlerBean(this, sock);
-
+            // 记录当前learner的最新epoch
             long lastAcceptedEpoch = ZxidUtils.getEpochFromZxid(qp.getZxid());
 
             long peerLastZxid;
             StateSummary ss = null;
             long zxid = qp.getZxid();
+            // 构建新的 epoch，
             long newEpoch = learnerMaster.getEpochToPropose(this.getSid(), lastAcceptedEpoch);
             long newLeaderZxid = ZxidUtils.makeZxid(newEpoch, 0);
 
@@ -533,10 +536,12 @@ public class LearnerHandler extends ZooKeeperThread {
                 byte[] ver = new byte[4];
                 ByteBuffer.wrap(ver).putInt(0x10000);
                 QuorumPacket newEpochPacket = new QuorumPacket(Leader.LEADERINFO, newLeaderZxid, ver, null);
+                // 将新的epoch发送给follower
                 oa.writeRecord(newEpochPacket, "packet");
                 messageTracker.trackSent(Leader.LEADERINFO);
                 bufferedOutput.flush();
                 QuorumPacket ackEpochPacket = new QuorumPacket();
+                // 接收 follower 发送过来的 ackEpoch ; writePacket(ackNewEpoch, true);
                 ia.readRecord(ackEpochPacket, "packet");
                 messageTracker.trackReceived(ackEpochPacket.getType());
                 if (ackEpochPacket.getType() != Leader.ACKEPOCH) {
@@ -545,12 +550,14 @@ public class LearnerHandler extends ZooKeeperThread {
                 }
                 ByteBuffer bbepoch = ByteBuffer.wrap(ackEpochPacket.getData());
                 ss = new StateSummary(bbepoch.getInt(), ackEpochPacket.getZxid());
+                // 阻塞等待 ack 过半
                 learnerMaster.waitForEpochAck(this.getSid(), ss);
             }
             peerLastZxid = ss.getLastZxid();
 
             // Take any necessary action if we need to send TRUNC or DIFF
             // startForwarding() will be called in all cases
+            // 判断 leader 和 follower之间是否需要同步
             boolean needSnap = syncFollower(peerLastZxid, learnerMaster);
 
             // syncs between followers and the leader are exempt from throttling because it
@@ -605,6 +612,7 @@ public class LearnerHandler extends ZooKeeperThread {
             bufferedOutput.flush();
 
             // Start thread that blast packets in the queue to learner
+            // 开启线程将数据发送到follower
             startSendingPackets();
 
             /*

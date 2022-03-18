@@ -97,12 +97,14 @@ public class DatadirCleanupManager {
             return;
         }
         // Don't schedule the purge task with zero or negative purge interval.
+        // purgeInterval = 0则不启动清除线程
         if (purgeInterval <= 0) {
             LOG.info("Purge task is not scheduled.");
             return;
         }
 
         timer = new Timer("PurgeTask", true);
+        // 定时清理任务 运行PurgeTask.run()方法
         TimerTask task = new PurgeTask(dataLogDir, snapDir, snapRetainCount);
         timer.scheduleAtFixedRate(task, 0, TimeUnit.HOURS.toMillis(purgeInterval));
 
@@ -138,6 +140,9 @@ public class DatadirCleanupManager {
         public void run() {
             LOG.info("Purge task started.");
             try {
+                // onfig.getDataLogDir()
+                // config.getDataDir(),
+                // 如果没有指定配置，这 dataDir == DataLogDir. 即 logsDir == snapsDir
                 PurgeTxnLog.purge(logsDir, snapsDir, snapRetainCount);
             } catch (Exception e) {
                 LOG.error("Error occurred while purging.", e);

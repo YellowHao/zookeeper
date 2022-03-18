@@ -85,21 +85,26 @@ public class QuorumMaj implements QuorumVerifier {
         for (Entry<Object, Object> entry : props.entrySet()) {
             String key = entry.getKey().toString();
             String value = entry.getValue().toString();
-
+            // 解析配置文件里的zookeeper服务节点信息 例如：server.1=localhost:2881:3881
             if (key.startsWith("server.")) {
                 int dot = key.indexOf('.');
+                // 这里的sid为1
                 long sid = Long.parseLong(key.substring(dot + 1));
                 QuorumServer qs = new QuorumServer(sid, value);
                 allMembers.put(Long.valueOf(sid), qs);
+                // type 默认是PARTICIPANT，可参与投票 如果设置server.1=localhost:2881:3881:type
                 if (qs.type == LearnerType.PARTICIPANT) {
                     votingMembers.put(Long.valueOf(sid), qs);
                 } else {
+                    // 否则为观察者
                     observingMembers.put(Long.valueOf(sid), qs);
                 }
             } else if (key.equals("version")) {
+                // 默认0
                 version = Long.parseLong(value, 16);
             }
         }
+        // 半数
         half = votingMembers.size() / 2;
     }
 
@@ -133,6 +138,7 @@ public class QuorumMaj implements QuorumVerifier {
      * Verifies if a set is a majority. Assumes that ackSet contains acks only
      * from votingMembers
      */
+    // 判断是否过半
     public boolean containsQuorum(Set<Long> ackSet) {
         return (ackSet.size() > half);
     }

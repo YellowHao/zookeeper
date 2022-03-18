@@ -419,6 +419,7 @@ public class QuorumCnxManager {
      * Server will initiate the connection request to its peer server
      * asynchronously via separate connection thread.
      */
+    // 服务器将通过单独的连接线程异步地向其对等服务器发起连接请求。
     public boolean initiateConnectionAsync(final MultipleAddresses electionAddr, final Long sid) {
         if (!inprogressConnections.add(sid)) {
             // simply return as there is a connection request to
@@ -427,6 +428,7 @@ public class QuorumCnxManager {
             return true;
         }
         try {
+            // 启动连接线程：QuorumConnectionReqThread.run()
             connectionExecutor.execute(new QuorumConnectionReqThread(electionAddr, sid));
             connectionThreadCnt.incrementAndGet();
         } catch (Throwable e) {
@@ -455,6 +457,7 @@ public class QuorumCnxManager {
         @Override
         public void run() {
             try {
+                // 初始化连接
                 initiateConnection(electionAddr, sid);
             } finally {
                 inprogressConnections.remove(sid);
@@ -464,7 +467,9 @@ public class QuorumCnxManager {
     }
 
     private boolean startConnection(Socket sock, Long sid) throws IOException {
+        // 输出流
         DataOutputStream dout = null;
+        // 输入流
         DataInputStream din = null;
         LOG.debug("startConnection (myId:{} --> sid:{})", self.getId(), sid);
         try {
@@ -480,7 +485,9 @@ public class QuorumCnxManager {
             // feature is enabled. During rolling upgrade, we must make sure that all the servers can
             // understand the protocol version we use to avoid multiple partitions. see ZOOKEEPER-3720
             long protocolVersion = self.isMultiAddressEnabled() ? PROTOCOL_VERSION_V2 : PROTOCOL_VERSION_V1;
+            // 先传协议版本
             dout.writeLong(protocolVersion);
+            // 写本服务id
             dout.writeLong(self.getId());
 
             // now we send our election address. For the new protocol version, we can send multiple addresses.
@@ -510,24 +517,29 @@ public class QuorumCnxManager {
         }
 
         // If lost the challenge, then drop the new connection
+        // 连接服务的sid大于本服务id。关闭连接
         if (sid > self.getId()) {
+            // 这里也可以保证两台服务之前只有一个连接
             LOG.info("Have smaller server identifier, so dropping the connection: (myId:{} --> sid:{})", self.getId(), sid);
             closeSocket(sock);
             // Otherwise proceed with the connection
         } else {
             LOG.debug("Have larger server identifier, so keeping the connection: (myId:{} --> sid:{})", self.getId(), sid);
+            // 通过网络将选票发送到其他服务
+            // 从 queueSendMap 中获取需要发送的sid 和 选票
             SendWorker sw = new SendWorker(sock, sid);
+            // 通过网络接收其他服务选票
             RecvWorker rw = new RecvWorker(sock, din, sid, sw);
             sw.setRecv(rw);
-
+            // 对该服务节点发送完选票后，关闭
             SendWorker vsw = senderWorkerMap.get(sid);
 
             if (vsw != null) {
                 vsw.finish();
             }
-
+            // 相当于用新的worker代理旧的发送worker
             senderWorkerMap.put(sid, sw);
-
+            // 为空则创建
             queueSendMap.putIfAbsent(sid, new CircularBlockingQueue<>(SEND_CAPACITY));
 
             sw.start();
@@ -690,6 +702,7 @@ public class QuorumCnxManager {
         /*
          * If sending message to myself, then simply enqueue it (loopback).
          */
+        // 如果是投给自己的选票，则不需要经过网络，直接放入recvQueue队列
         if (this.mySid == sid) {
             b.position(0);
             addToRecvQueue(new Message(b.duplicate(), sid));
@@ -700,8 +713,11 @@ public class QuorumCnxManager {
             /*
              * Start a new connection if doesn't have one already.
              */
+            // 为每台参与者服务创建发送选票队列 sid -> queue
             BlockingQueue<ByteBuffer> bq = queueSendMap.computeIfAbsent(sid, serverId -> new CircularBlockingQueue<>(SEND_CAPACITY));
             addToSendQueue(bq, b);
+            // 这里也会单独连接目标服务。
+            // lookForLeader中是连接所有 connectAll
             connectOne(sid);
         }
     }
@@ -740,6 +756,7 @@ public class QuorumCnxManager {
      *  @param sid  server id
      */
     synchronized void connectOne(long sid) {
+        // senderWorkerMap 每个服务节点创建一个 SendWorker
         if (senderWorkerMap.get(sid) != null) {
             LOG.debug("There is a connection already for server {}", sid);
             if (self.isMultiAddressEnabled() && self.isMultiAddressReachabilityCheckEnabled()) {
@@ -754,8 +771,11 @@ public class QuorumCnxManager {
             boolean knownId = false;
             // Resolve hostname for the remote server before attempting to
             // connect in case the underlying ip address has changed.
+            // 未建立连接
             self.recreateSocketAddresses(sid);
+            // 所有节点
             Map<Long, QuorumPeer.QuorumServer> lastCommittedView = self.getView();
+            // 返回最后提议的配置的 QuorumVerifier 对象。
             QuorumVerifier lastSeenQV = self.getLastSeenQuorumVerifier();
             Map<Long, QuorumPeer.QuorumServer> lastProposedView = lastSeenQV.getAllMembers();
             if (lastCommittedView.containsKey(sid)) {
@@ -789,7 +809,9 @@ public class QuorumCnxManager {
 
     public void connectAll() {
         long sid;
+        // queueSendMap 为 WorkerSender为每个选举节点创建。key -> sid, value -> queue(放选票)
         for (Enumeration<Long> en = queueSendMap.keys(); en.hasMoreElements(); ) {
+            // 循环每个服务节点，创建连接
             sid = en.nextElement();
             connectOne(sid);
         }
@@ -1151,6 +1173,12 @@ public class QuorumCnxManager {
      * soon as there is one available. If connection breaks, then opens a new
      * one.
      */
+    /**
+     * 发送选票线程。 实例在队列上等待，并在有可用消息时立即发送消息。 如果连接中断，则打开一个新的。
+     * SendWorker是把选票从queueSendMap中取出来，通过socket连接发送到其他服务器
+     * （还有个 WorkerSender，这个是将选票从sendqueue取出放入queueSendMap）
+     * WorkerSender -> sendqueue -> SendWorker
+     * */
     class SendWorker extends ZooKeeperThread {
 
         Long sid;
@@ -1222,6 +1250,7 @@ public class QuorumCnxManager {
             return running;
         }
 
+        // 通过Socket发送选票
         synchronized void send(ByteBuffer b) throws IOException {
             byte[] msgBytes = new byte[b.capacity()];
             try {
@@ -1253,8 +1282,18 @@ public class QuorumCnxManager {
                  * message than that stored in lastMessage. To avoid sending
                  * stale message, we should send the message in the send queue.
                  */
+                /**
+                 * 如果队列中没有要发送的内容，
+                 * 那么我们发送 lastMessage 以确保对等方收到最后一条消息。
+                 * 如果自身或对等方在读取/处理最后一条消息之前关闭它们的连接（并退出线程），
+                 * 则可以丢弃该消息。 对等方正确处理重复消息。
+                 * 如果发送队列非空，那么我们有一个最近的消息，而不是存储在 lastMessage 中的消息。
+                 * 为了避免发送过时的消息，我们应该在发送队列中发送消息。
+                 */
                 BlockingQueue<ByteBuffer> bq = queueSendMap.get(sid);
                 if (bq == null || isSendQueueEmpty(bq)) {
+                    // lastMessageSent 每发送一张选票，就将该选票放入lastMessageSent
+                    // 确保对方一定收到了 ，我不太理解
                     ByteBuffer b = lastMessageSent.get(sid);
                     if (b != null) {
                         LOG.debug("Attempting to send lastMessage to sid={}", sid);
@@ -1272,8 +1311,10 @@ public class QuorumCnxManager {
 
                     ByteBuffer b = null;
                     try {
+                        // 获取需要发送到该服务节点的选票消息队列
                         BlockingQueue<ByteBuffer> bq = queueSendMap.get(sid);
                         if (bq != null) {
+                            // 取出消息
                             b = pollSendQueue(bq, 1000, TimeUnit.MILLISECONDS);
                         } else {
                             LOG.error("No queue of incoming messages for server {}", sid);
@@ -1281,7 +1322,11 @@ public class QuorumCnxManager {
                         }
 
                         if (b != null) {
+                            // 将选票放入 lastMessageSent.
+                            // Map结构，所以每台服务器节点只能保存一条
                             lastMessageSent.put(sid, b);
+                            // 执行发送选票操作
+                            // 通过Socket发送选票
                             send(b);
                         }
                     } catch (InterruptedException e) {
@@ -1332,6 +1377,10 @@ public class QuorumCnxManager {
     /**
      * Thread to receive messages. Instance waits on a socket read. If the
      * channel breaks, then removes itself from the pool of receivers.
+     */
+    /**
+     * 通过socket接收来自其他服务器节点的选票
+     * RecvWorker -> recvQueue ->WorkerReceiver
      */
     class RecvWorker extends ZooKeeperThread {
 
@@ -1387,6 +1436,8 @@ public class QuorumCnxManager {
                      * Reads the first int to determine the length of the
                      * message
                      */
+                    // dout.writeInt(b.capacity());
+                    // 发送的时候 写了该消息的长度
                     int length = din.readInt();
                     if (length <= 0 || length > PACKETMAXSIZE) {
                         throw new IOException("Received packet with invalid packet: " + length);
@@ -1395,7 +1446,11 @@ public class QuorumCnxManager {
                      * Allocates a new ByteBuffer to receive the message
                      */
                     final byte[] msgArray = new byte[length];
+                    // 读取选票
                     din.readFully(msgArray, 0, length);
+                    // 将输入流封装成消息（选票）
+                    // 将选票加入 recvQueue
+                    // WorkerReceiver会从该队列取出消息并处理
                     addToRecvQueue(new Message(ByteBuffer.wrap(msgArray), sid));
                 }
             } catch (Exception e) {

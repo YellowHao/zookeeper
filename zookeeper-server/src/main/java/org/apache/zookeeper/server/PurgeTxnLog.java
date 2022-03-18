@@ -73,6 +73,7 @@ public class PurgeTxnLog {
      * @throws IOException
      */
     public static void purge(File dataDir, File snapDir, int num) throws IOException {
+        // 最少保留3个快照版本，否则抛出异常
         if (num < 3) {
             throw new IllegalArgumentException(COUNT_ERR_MSG);
         }
@@ -82,6 +83,7 @@ public class PurgeTxnLog {
         List<File> snaps = txnLog.findNValidSnapshots(num);
         int numSnaps = snaps.size();
         if (numSnaps > 0) {
+            // 清除老版本
             purgeOlderSnapshots(txnLog, snaps.get(numSnaps - 1));
         }
     }

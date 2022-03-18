@@ -500,9 +500,12 @@ public class Learner {
         BinaryOutputArchive boa = BinaryOutputArchive.getArchive(bsid);
         boa.writeRecord(li, "LearnerInfo");
         qp.setData(bsid.toByteArray());
-
+        // 发送到leader节点
         writePacket(qp, true);
+        // 接收leader节点数据 oa.writeRecord(newEpochPacket, "packet");
+        // 这里接收到了最新的 epoch
         readPacket(qp);
+        // 接收到leader构建的新 epoch
         final long newEpoch = ZxidUtils.getEpochFromZxid(qp.getZxid());
         if (qp.getType() == Leader.LEADERINFO) {
             // we are connected to a 1.0 server so accept the new epoch and read the next packet
@@ -525,6 +528,7 @@ public class Learner {
                                       + self.getAcceptedEpoch());
             }
             QuorumPacket ackNewEpoch = new QuorumPacket(Leader.ACKEPOCH, lastLoggedZxid, epochBytes, null);
+            // 发送 ack 给leader，表示接受新的 epoch
             writePacket(ackNewEpoch, true);
             return ZxidUtils.makeZxid(newEpoch, 0);
         } else {

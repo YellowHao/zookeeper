@@ -175,13 +175,16 @@ public class QuorumPeerConfig {
 
         try {
             File configFile = (new VerifyingFileFactory.Builder(LOG)
+                    // 校验路径
                 .warnForRelativePath()
+                    // 校验配置文件是否存在
                 .failForNonExistingPath()
                 .build()).create(path);
 
             Properties cfg = new Properties();
             FileInputStream in = new FileInputStream(configFile);
             try {
+                // 加载配置信息
                 cfg.load(in);
                 configFileStr = path;
             } finally {
@@ -190,7 +193,7 @@ public class QuorumPeerConfig {
 
             /* Read entire config file as initial configuration */
             initialConfig = new String(Files.readAllBytes(configFile.toPath()));
-
+            // 给 QuorumPeerConfig 成员变量赋值（通过配置或者设置默认值）
             parseProperties(cfg);
         } catch (IOException e) {
             throw new ConfigException("Error processing " + path, e);
@@ -440,6 +443,7 @@ public class QuorumPeerConfig {
             this.clientPortAddress = new InetSocketAddress(InetAddress.getByName(clientPortAddress), clientPort);
             LOG.info("clientPortAddress is {}", formatInetAddr(this.clientPortAddress));
         } else {
+            // 如果未设置，则取 clientPort
             this.clientPortAddress = new InetSocketAddress(clientPort);
             LOG.info("clientPortAddress is {}", formatInetAddr(this.clientPortAddress));
         }
@@ -488,6 +492,7 @@ public class QuorumPeerConfig {
         // backward compatibility - dynamic configuration in the same file as
         // static configuration params see writeDynamicConfig()
         if (dynamicConfigFileStr == null) {
+            // 设置服务配置信息
             setupQuorumPeerConfig(zkProp, true);
             if (isDistributed() && isReconfigEnabled()) {
                 // we don't backup static config for standalone mode.
@@ -660,10 +665,15 @@ public class QuorumPeerConfig {
     }
 
     void setupQuorumPeerConfig(Properties prop, boolean configBackwardCompatibilityMode) throws IOException, ConfigException {
+        // 初始化QuorumVerifier 保护所有zookeeper的节点
         quorumVerifier = parseDynamicConfig(prop, electionAlg, true, configBackwardCompatibilityMode);
+        // 设置myid 需要myid文件
         setupMyId();
+        // 设置客户端端口号
         setupClientPort();
+        // 设置zookeeper服务类型
         setupPeerType();
+        // 校验如果是集群模式，则 initLimit、syncLimit、serverId必须设置
         checkValidity();
     }
 
@@ -685,10 +695,11 @@ public class QuorumPeerConfig {
                 throw new ConfigException("Unrecognised parameter: " + key);
             }
         }
-
+        // 初始化 QuorumVerifier 子类 QuorumMaj
         QuorumVerifier qv = createQuorumVerifier(dynamicConfigProp, isHierarchical);
-
+        // 参与者（可投票）数量
         int numParticipators = qv.getVotingMembers().size();
+        // 观察者数量
         int numObservers = qv.getObservingMembers().size();
         if (numParticipators == 0) {
             if (!standaloneEnabled) {
@@ -709,6 +720,7 @@ public class QuorumPeerConfig {
             }
         } else {
             if (warnings) {
+                // 只是警告，参与者至少3台
                 if (numParticipators <= 2) {
                     LOG.warn("No server failure will be tolerated. You need at least 3 servers.");
                 } else if (numParticipators % 2 == 0) {
@@ -747,6 +759,7 @@ public class QuorumPeerConfig {
     }
 
     private void setupClientPort() throws ConfigException {
+        // setupMyId() 已经将serverId设置为了myid
         if (serverId == UNSET_SERVERID) {
             return;
         }
@@ -764,6 +777,7 @@ public class QuorumPeerConfig {
             clientPortAddress = qs.clientAddr;
         }
         if (qs != null && qs.clientAddr == null) {
+            // 设置地址
             qs.clientAddr = clientPortAddress;
             qs.isClientAddrFromStatic = true;
         }
